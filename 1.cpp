@@ -1,313 +1,596 @@
-#include "./filtered_string_view.h"
+#include "gdwg_graph.h"
 
 #include <catch2/catch.hpp>
-#include <cstring>
-#include <set>
+#include <optional>
 
-TEST_CASE("Test Default Constructor") {
-    auto sv = fsv::filtered_string_view();
-    CHECK(sv.data() == nullptr);
-    CHECK(sv.size() == 0);
+TEST_CASE("basic test") {
+	auto g = gdwg::Graph<int, std::string>{};
+	auto n = 5;
+	g.insert_node(n);
+	CHECK(g.is_node(n));
 }
 
-TEST_CASE("Test Implicit String Constructor") {
-    auto s = std::string("cat");
-    auto sv = fsv::filtered_string_view(s);
-    CHECK(!std::strcmp(sv.data(), "cat"));
-    CHECK(sv.size() == 3);
-    CHECK(sv.predicate()('1') == true);
+TEST_CASE("Graph Constructors and Assignment") {
+	SECTION("Default Constructor") {
+		gdwg::Graph<int, int> g;
+		CHECK(g.empty());
+		CHECK(g.nodes().empty());
+		CHECK(g.begin() == g.end());
+	}
+
+	SECTION("Initializer List Constructor") {
+		gdwg::Graph<std::string, int> g{"A", "B", "C"};
+		CHECK(g.is_node("A"));
+		CHECK(g.is_node("B"));
+		CHECK(g.is_node("C"));
+		CHECK(!g.is_node("D"));
+		CHECK(g.nodes().size() == 3);
+		CHECK(g.edges("A", "B").empty());
+	}
+
+	SECTION("Iterator Range Constructor") {
+		std::vector<int> v{1, 2, 3, 4, 5};
+		gdwg::Graph<int, int> g(v.begin(), v.end());
+		CHECK(g.nodes().size() == 5);
+		for (int i = 1; i <= 5; ++i) {
+			CHECK(g.is_node(i));
+		}
+	}
+
+	SECTION("Copy Constructor") {
+		gdwg::Graph<std::string, int> g1;
+		g1.insert_node("A");
+		g1.insert_node("B");
+		g1.insert_edge("A", "B", 5);
+
+		gdwg::Graph<std::string, int> g2(g1);
+		CHECK(g1 == g2);
+		CHECK(g2.is_node("A"));
+		CHECK(g2.is_node("B"));
+		CHECK(g2.is_connected("A", "B"));
+		CHECK(g2.edges("A", "B").front()->get_weight() == 5);
+
+		g2.insert_node("C");
+		CHECK(!g1.is_node("C"));
+	}
+
+	SECTION("Move Constructor") {
+		gdwg::Graph<std::string, int> g1;
+		g1.insert_node("A");
+		g1.insert_node("B");
+		g1.insert_edge("A", "B", 5);
+
+		gdwg::Graph<std::string, int> g2(std::move(g1));
+		CHECK(g1.empty()); // Moved-from object is empty
+		CHECK(g2.is_node("A"));
+		CHECK(g2.is_node("B"));
+		CHECK(g2.is_connected("A", "B"));
+		CHECK(g2.edges("A", "B").front()->get_weight() == 5);
+	}
+
+	SECTION("Copy Assignment") {
+		gdwg::Graph<std::string, int> g1;
+		g1.insert_node("A");
+		g1.insert_node("B");
+		g1.insert_edge("A", "B", 5);
+
+		gdwg::Graph<std::string, int> g2;
+		g2.insert_node("X"); // Should be overwritten
+		g2 = g1;
+
+		CHECK(g1 == g2);
+		CHECK(g2.is_node("A"));
+		CHECK(!g2.is_node("X"));
+
+		// Ensure it's a deep copy
+		g2.insert_node("C");
+		CHECK(!g1.is_node("C"));
+	}
+
+	SECTION("Move Assignment") {
+		gdwg::Graph<std::string, int> g1;
+		g1.insert_node("A");
+		g1.insert_node("B");
+		g1.insert_edge("A", "B", 5);
+
+		gdwg::Graph<std::string, int> g2;
+		g2.insert_node("X");
+		g2 = std::move(g1);
+
+		CHECK(g1.empty());
+		CHECK(g2.is_node("A"));
+		CHECK(!g2.is_node("X"));
+		CHECK(g2.is_connected("A", "B"));
+	}
 }
 
-TEST_CASE("Test String Constructor with Predicate") {
-    auto s = std::string("cat");
-    auto pred = [](const char& c) { return c == 'a'; };
-    auto sv = fsv::filtered_string_view(s, pred);
-    CHECK(!std::strcmp(sv.data(), "cat"));
-    CHECK(sv.size() == 1);
-    CHECK(sv.predicate()('c') == false);
-    CHECK(sv.predicate()('a') == true);
+TEST_CASE("Graph Modifiers") {
+	gdwg::Graph<std::string, double> g;
+
+	SECTION("insert_node") {
+		CHECK(g.insert_node("A"));
+		CHECK(g.is_node("A"));
+		CHECK(g.nodes().size() == 1);
+
+		CHECK(g.insert_node("B"));
+		CHECK(g.is_node("B"));
+		CHECK(g.nodes().size() == 2);
+		CHECK(g.edges("A", "B").empty());
+
+		CHECK(!g.insert_node("A"));
+		CHECK(g.nodes().size() == 2);
+	}
+
+	SECTION("insert_edge") {
+		g.insert_node("A");
+		g.insert_node("B");
+		g.insert_node("C");
+
+		CHECK(g.insert_edge("A", "B"));
+		CHECK(g.is_connected("A", "B"));
+		CHECK(!g.insert_edge("A", "B"));
+
+		CHECK(g.insert_edge("A", "B", 3.14));
+		CHECK(g.insert_edge("A", "B", 6.28));
+		CHECK(!g.insert_edge("A", "B", 3.14));
+
+		CHECK(g.insert_edge("C", "C", 1.0));
+		CHECK(g.is_connected("C", "C"));
+
+		CHECK_THROWS_WITH(g.insert_edge("A", "D", 1.0),
+		                  "Cannot call gdwg::Graph<N, E>::insert_edge when either src or dst node "
+		                  "does not exist");
+		CHECK_THROWS_WITH(g.insert_edge("D", "A", 1.0),
+		                  "Cannot call gdwg::Graph<N, E>::insert_edge when either src or dst node "
+		                  "does not exist");
+	}
+
+	SECTION("replace_node") {
+		g.insert_node("A");
+		g.insert_node("B");
+		g.insert_edge("A", "B", 1.1);
+		g.insert_edge("B", "A", 2.2);
+
+		CHECK(g.replace_node("A", "C"));
+		CHECK(!g.is_node("A"));
+		CHECK(g.is_node("C"));
+		CHECK(g.is_connected("C", "B"));
+		CHECK(g.is_connected("B", "C"));
+		CHECK(g.edges("C", "B").front()->get_weight().value() == 1.1);
+
+		g.insert_node("D");
+		CHECK(!g.replace_node("B", "D"));
+		CHECK(g.is_node("B"));
+
+		CHECK_THROWS_WITH(g.replace_node("X", "Y"),
+		                  "Cannot call gdwg::Graph<N, E>::replace_node on a node that doesn't exist");
+	}
+
+	SECTION("merge_replace_node") {
+		gdwg::Graph<int, int> g_int;
+		g_int.insert_node(1);
+		g_int.insert_node(2);
+		g_int.insert_node(3);
+		g_int.insert_node(4);
+		g_int.insert_edge(1, 2, 10);
+		g_int.insert_edge(3, 1, 20);
+		g_int.insert_edge(2, 3, 30);
+		g_int.insert_edge(2, 2, 5);
+
+		g_int.merge_replace_node(1, 2);
+
+		CHECK(!g_int.is_node(1));
+		CHECK(g_int.is_node(2));
+		CHECK(g_int.is_node(3));
+
+		auto edges_2_2 = g_int.edges(2, 2);
+		auto edges_2_3 = g_int.edges(2, 3);
+		auto edges_3_2 = g_int.edges(3, 2);
+
+		CHECK(edges_2_2.size() == 2);
+		CHECK(edges_2_3.size() == 1);
+		CHECK(edges_3_2.size() == 1);
+
+		CHECK(edges_3_2[0]->get_weight() == 20);
+		CHECK(edges_2_3[0]->get_weight() == 30);
+
+		g_int.merge_replace_node(3, 4);
+		CHECK(!g_int.is_node(3));
+		CHECK(g_int.edges(4, 2).size() == 1);
+	}
+
+	SECTION("merge_replace_node duplicate") {
+		gdwg::Graph<int, int> g_int;
+		g_int.insert_node(1);
+		g_int.insert_node(2);
+		g_int.insert_node(3);
+		g_int.insert_edge(1, 2, 10);
+		g_int.insert_edge(1, 3, 30);
+		g_int.insert_edge(2, 3, 30);
+
+		g_int.merge_replace_node(1, 2);
+
+		CHECK(!g_int.is_node(1));
+		CHECK(g_int.is_node(2));
+		CHECK(g_int.is_node(3));
+
+		CHECK(g_int.edges(2, 3).size() == 1);
+	}
+
+	SECTION("merge_replace_node throw") {
+		gdwg::Graph<char, int> g_char;
+		g_char.insert_node('A');
+		g_char.insert_node('B');
+		g_char.insert_node('C');
+		g_char.insert_edge('A', 'C', 1);
+		g_char.insert_edge('B', 'C', 1);
+
+		g_char.merge_replace_node('A', 'B');
+		CHECK(!g_char.is_node('A'));
+		CHECK(g_char.edges('B', 'C').size() == 1);
+
+		CHECK_THROWS_WITH(g_char.merge_replace_node('A', 'X'),
+		                  "Cannot call gdwg::Graph<N, E>::merge_replace_node on old or new data if "
+		                  "they don't exist in the graph");
+	}
+
+	SECTION("erase_node") {
+		g.insert_node("A");
+		g.insert_node("B");
+		g.insert_node("C");
+		g.insert_edge("A", "B", 1.0);
+		g.insert_edge("C", "A", 2.0);
+
+		CHECK(g.erase_node("A"));
+		CHECK(!g.is_node("A"));
+		CHECK_THROWS_WITH(g.merge_replace_node("A", "B"),
+		                  "Cannot call gdwg::Graph<N, E>::merge_replace_node on old or new data if "
+		                  "they don't exist in the graph");
+		CHECK_THROWS_WITH(g.merge_replace_node("C", "A"),
+		                  "Cannot call gdwg::Graph<N, E>::merge_replace_node on old or new data if "
+		                  "they don't exist in the graph");
+		CHECK(g.nodes().size() == 2);
+
+		CHECK(!g.erase_node("D"));
+	}
+
+	SECTION("erase_edge by value") {
+		g.insert_node("A");
+		g.insert_node("B");
+		g.insert_edge("A", "B");
+		g.insert_edge("A", "B", 1.1);
+		g.insert_edge("A", "B", 2.2);
+
+		CHECK(g.erase_edge("A", "B", 1.1));
+		CHECK(g.edges("A", "B").size() == 2);
+		CHECK(!g.erase_edge("A", "B", 9.9));
+		CHECK(g.erase_edge("A", "B"));
+		CHECK(g.edges("A", "B").size() == 1);
+		CHECK(!g.erase_edge("A", "B"));
+
+		CHECK_THROWS_WITH(g.erase_edge("A", "X", 1.0),
+		                  "Cannot call gdwg::Graph<N, E>::erase_edge on src or dst if they don't "
+		                  "exist in the graph");
+	}
+
+	SECTION("erase_edge by iterator") {
+		g.insert_node("A");
+		g.insert_node("B");
+		g.insert_edge("A", "B", 1.1);
+		g.insert_edge("A", "B", 2.2);
+		g.insert_edge("A", "B", 3.3);
+
+		auto it = g.find("A", "B", 2.2);
+		REQUIRE(it != g.end());
+
+		auto next_it = g.erase_edge(it);
+		CHECK(g.is_connected("A", "B"));
+		CHECK(g.edges("A", "B").size() == 2);
+		CHECK((*next_it).weight.value() == 3.3);
+
+		auto start_it = g.find("A", "B", 1.1);
+		auto end_it = g.end();
+		auto ret_it = g.erase_edge(start_it, end_it);
+		CHECK_FALSE(g.empty());
+		CHECK(ret_it == g.end());
+	}
+
+	SECTION("clear") {
+		g.insert_node("A");
+		g.insert_edge("A", "A", 1.0);
+		g.clear();
+		CHECK(g.empty());
+		CHECK(g.nodes().empty());
+	}
 }
 
-TEST_CASE("Test Implicit Null-Terminated String Constructor") {
-    auto sv = fsv::filtered_string_view("cat");
-    CHECK(!std::strcmp(sv.data(), "cat"));
-    CHECK(sv.size() == 3);
-    CHECK(sv.predicate()('1') == true);
+TEST_CASE("Graph Accessors") {
+	gdwg::Graph<int, std::string> g;
+	g.insert_node(1);
+	g.insert_node(2);
+	g.insert_node(3);
+	g.insert_edge(1, 2, "hello");
+	g.insert_edge(1, 3, "world");
+	g.insert_edge(1, 2, "another");
+
+	SECTION("is_node, empty") {
+		CHECK(g.is_node(1));
+		CHECK(!g.is_node(99));
+		CHECK(!g.empty());
+		gdwg::Graph<int, int> g_empty;
+		CHECK(g_empty.empty());
+	}
+
+	SECTION("is_connected") {
+		CHECK(g.is_connected(1, 2));
+		CHECK(g.is_connected(1, 3));
+		CHECK(!g.is_connected(2, 1));
+		CHECK_THROWS_WITH(g.is_connected(1, 99),
+		                  "Cannot call gdwg::Graph<N, E>::is_connected if src or dst node don't "
+		                  "exist in the graph");
+	}
+
+	SECTION("nodes") {
+		auto nodes = g.nodes();
+		std::vector<int> expected{1, 2, 3};
+		CHECK(nodes == expected);
+	}
+
+	SECTION("edges") {
+		auto edges12 = g.edges(1, 2);
+		CHECK(edges12.size() == 2);
+
+		CHECK(edges12[0]->get_weight().value() == "another");
+		CHECK(edges12[1]->get_weight().value() == "hello");
+
+		auto edges13 = g.edges(1, 3);
+		CHECK(edges13.size() == 1);
+		CHECK(edges13[0]->get_weight().value() == "world");
+		CHECK(g.edges(2, 1).empty());
+		CHECK_THROWS_WITH(g.edges(1, 99),
+		                  "Cannot call gdwg::Graph<N, E>::edges if src or dst node don't exist in "
+		                  "the graph");
+	}
+
+	SECTION("connections") {
+		auto conns = g.connections(1);
+		std::vector<int> expected{2, 3};
+		CHECK(conns == expected);
+
+		CHECK(g.connections(2).empty());
+
+		CHECK_THROWS_WITH(g.connections(99),
+		                  "Cannot call gdwg::Graph<N, E>::connections if src doesn't exist in the "
+		                  "graph");
+	}
 }
 
-TEST_CASE("Test Null-Terminated String with Predicate Constructor") {
-    auto pred = [](const char& c) { return c == 'a'; };
-    auto sv = fsv::filtered_string_view("cat", pred);
-    CHECK(!std::strcmp(sv.data(), "cat"));
-    CHECK(sv.size() == 1);
-    CHECK(sv.predicate()('c') == false);
-    CHECK(sv.predicate()('a') == true);
+TEST_CASE("Graph Iterator") {
+	gdwg::Graph<char, int> g;
+	g.insert_node('A');
+	g.insert_node('B');
+	g.insert_node('C');
+	g.insert_edge('A', 'B', 1);
+	g.insert_edge('A', 'C', 2);
+	g.insert_edge('B', 'C', 3);
+
+	SECTION("begin, end, and traversal") {
+		auto it = g.begin();
+		CHECK((*it).from == 'A');
+		CHECK((*it).to == 'B');
+		CHECK((*it).weight.value() == 1);
+		++it;
+		CHECK((*it).from == 'A');
+		CHECK((*it).to == 'C');
+		CHECK((*it).weight.value() == 2);
+		++it;
+		CHECK((*it).from == 'B');
+		CHECK((*it).to == 'C');
+		CHECK((*it).weight.value() == 3);
+		++it;
+		CHECK(it == g.end());
+		--it;
+		CHECK((*it).from == 'B');
+		CHECK((*it).to == 'C');
+		--it;
+		--it;
+		CHECK(it == g.begin());
+	}
+
+	SECTION("find") {
+		auto it_found = g.find('A', 'C', 2);
+		REQUIRE(it_found != g.end());
+		CHECK((*it_found).from == 'A');
+		CHECK((*it_found).to == 'C');
+
+		auto it_not_found = g.find('A', 'C', 99);
+		CHECK(it_not_found == g.end());
+
+		auto it_no_node = g.find('X', 'A', 1);
+		CHECK(it_no_node == g.end());
+	}
+
+	SECTION("empty graph iterators") {
+		gdwg::Graph<int, int> empty_g;
+		CHECK(empty_g.begin() == empty_g.end());
+	}
 }
 
-TEST_CASE("Test Copy and Move constructor") {
-    auto sv1 = fsv::filtered_string_view("bulldog");
-    const auto copy = sv1;
+TEST_CASE("Comparisons and Extractor") {
+	gdwg::Graph<int, int> g1;
+	g1.insert_node(1);
+	g1.insert_node(2);
+	g1.insert_edge(1, 2, 100);
 
-    CHECK(copy.data() == sv1.data());
-    CHECK(copy.size() == sv1.size());
-    CHECK(copy.predicate()('1') == sv1.predicate()('1'));
+	gdwg::Graph<int, int> g2;
+	g2.insert_node(1);
+	g2.insert_node(2);
+	g2.insert_edge(1, 2, 100);
 
-    const auto move = std::move(sv1);
-    CHECK(!std::strcmp(move.data(), "bulldog"));
-    CHECK(move.size() == 7);
-    CHECK(sv1.data() == nullptr);
-    CHECK(sv1.size() == 0);
+	gdwg::Graph<int, int> g3;
+	g3.insert_node(1);
+	g3.insert_node(2);
+	g3.insert_edge(1, 2, 200); // Different edge
+
+	gdwg::Graph<int, int> g4;
+	g4.insert_node(1); // Different nodes
+
+	SECTION("operator==") {
+		CHECK(g1 == g2);
+		CHECK(!(g1 == g3));
+		CHECK(!(g1 == g4));
+	}
+
+	SECTION("Extractor operator<< modify from example") {
+		using graph = gdwg::Graph<int, int>;
+		auto const v = std::vector<std::tuple<int, int, std::optional<int>>>{
+		    {4, 1, -4},
+		    {3, 2, 2},
+		    {2, 4, std::nullopt},
+		    {2, 4, 2},
+		    {2, 1, 1},
+		    {4, 1, std::nullopt},
+		    {6, 2, 5},
+		    {5, 2, std::nullopt},
+		};
+		auto g = graph{};
+		for (const auto& [from, to, weight] : v) {
+			g.insert_node(from);
+			g.insert_node(to);
+			g.insert_edge(from, to, weight);
+		}
+		g.insert_node(64);
+
+		auto out = std::ostringstream{};
+		out << g;
+		auto const expected_output = std::string_view(R"(1 (
+)
+2 (
+  2 -> 1 | W | 1
+  2 -> 4 | U
+  2 -> 4 | W | 2
+)
+3 (
+  3 -> 2 | W | 2
+)
+4 (
+  4 -> 1 | U
+  4 -> 1 | W | -4
+)
+5 (
+  5 -> 2 | U
+)
+6 (
+  6 -> 2 | W | 5
+)
+64 (
+)
+)");
+		CHECK(out.str() == expected_output);
+	}
 }
 
-TEST_CASE("Test Copy Assignment") {
-    auto pred = [](const char& c) { return c == '4' || c == '2'; };
-    auto fsv1 = fsv::filtered_string_view("42 bro", pred);
-    auto fsv2 = fsv::filtered_string_view();
-    fsv2 = fsv1;
-    CHECK(fsv1 == fsv2);
+TEST_CASE("Edge Class Hierarchy and Details") {
+	using graph = gdwg::Graph<int, int>;
+
+	SECTION("UnweightedEdge functionality") {
+		graph g;
+		g.insert_node(1);
+		g.insert_node(2);
+		g.insert_edge(1, 2, std::nullopt);
+
+		auto edges = g.edges(1, 2);
+		REQUIRE(edges.size() == 1);
+		auto& edge = edges[0];
+
+		CHECK(!edge->is_weighted());
+		CHECK(!edge->get_weight().has_value());
+
+		auto nodes = edge->get_nodes();
+		CHECK(nodes.first == 1);
+		CHECK(nodes.second == 2);
+
+		CHECK(edge->print_edge() == "1 -> 2 | U");
+	}
+
+	SECTION("WeightedEdge functionality") {
+		graph g;
+		g.insert_node(1);
+		g.insert_node(2);
+		g.insert_edge(1, 2, 100);
+
+		auto edges = g.edges(1, 2);
+		REQUIRE(edges.size() == 1);
+		auto& edge = edges[0];
+
+		CHECK(edge->is_weighted());
+		CHECK(edge->get_weight().has_value());
+		CHECK(edge->get_weight().value() == 100);
+
+		auto nodes = edge->get_nodes();
+		CHECK(nodes.first == 1);
+		CHECK(nodes.second == 2);
+
+		CHECK(edge->print_edge() == "1 -> 2 | W | 100");
+	}
+
+	SECTION("Unweighted and Weighted edge sorting in edges") {
+		gdwg::Graph<int, int> g;
+		g.insert_node(1);
+		g.insert_node(2);
+		g.insert_edge(1, 2, 5);
+		g.insert_edge(1, 2, std::nullopt);
+		g.insert_edge(1, 2, -10);
+
+		auto edges_vec = g.edges(1, 2);
+		REQUIRE(edges_vec.size() == 3);
+
+		// Unweighted edge should be first
+		CHECK_FALSE(edges_vec[0]->is_weighted());
+
+		// Weighted edges should be sorted
+		CHECK(edges_vec[1]->get_weight().value() == -10);
+		CHECK(edges_vec[2]->get_weight().value() == 5);
+	}
 }
 
-TEST_CASE("Test Move Assignment") {
-    auto pred = [](const char& c) { return c == '8' || c == '9'; };
-    auto fsv1 = fsv::filtered_string_view("'89 baby", pred);
-    auto fsv2 = fsv::filtered_string_view();
-    fsv2 = std::move(fsv1);
+TEST_CASE("Graph Iterator for Weight and Unweight") {
+	gdwg::Graph<std::string, int> g;
+	g.insert_node("A");
+	g.insert_node("B");
+	g.insert_node("C");
+	g.insert_node("D");
+	g.insert_node("E");
 
-    CHECK(!std::strcmp(fsv2.data(), "'89 baby"));
-    CHECK(fsv2 == "89");
-    CHECK(fsv2.size() == 2);
-    assert(fsv1.data() == nullptr);
-    CHECK(fsv1.size() == 0);
-}
+	g.insert_edge("A", "C", 5);
+	g.insert_edge("A", "B", 10);
+	g.insert_edge("B", "D", 20);
+	g.insert_edge("D", "D");
+	g.insert_edge("A", "C");
 
-TEST_CASE("Test Subscript") {
-    auto pred = [](const char& c) { return c == '9' || c == '0' || c == ' '; };
-    auto fsv1 = fsv::filtered_string_view("only 90s kids understand", pred);
-    CHECK(fsv1[0] == ' ');
-    CHECK(fsv1[1] == '9');
-    CHECK(fsv1[2] == '0');
-    CHECK(fsv1[3] == ' ');
-}
+	SECTION("Forward ") {
+		auto it = g.begin();
 
-TEST_CASE("Test at") {
-    SECTION("success") {
-        auto vowels = std::set<char>{'a', 'A', 'e', 'E', 'i', 'I', 'o', 'O', 'u', 'U'};
-        auto is_vowel = [&vowels](const char& c) { return vowels.contains(c); };
-        auto sv = fsv::filtered_string_view("Malamute", is_vowel);
-        CHECK(sv.at(0) == 'a');
-    }
-
-    SECTION("fail") {
-        auto sv = fsv::filtered_string_view("");
-        CHECK_THROWS_AS(sv.at(0), std::domain_error);
-
-        auto pred = [](const char& c) { return c == '9' || c == '0'; };
-        sv = fsv::filtered_string_view("only 90s kids understand", pred);
-        CHECK(sv.at(0) == '9');
-        CHECK(sv.at(1) == '0');
-        CHECK_THROWS_AS(sv.at(2), std::domain_error);
-    }
-}
-
-TEST_CASE("Test size") {
-    auto sv = fsv::filtered_string_view("Maltese");
-    CHECK(sv.size() == 7);
-
-    sv = fsv::filtered_string_view("Toy Poodle", [](const char& c) { return c == 'o'; });
-    CHECK(sv.size() == 3);
-}
-
-TEST_CASE("Test empty") {
-    auto sv = fsv::filtered_string_view("Australian Shephard");
-    auto empty_sv = fsv::filtered_string_view();
-    CHECK(sv.empty() == false);
-    CHECK(empty_sv.empty() == true);
-
-    sv = fsv::filtered_string_view("Border Collie", [](const char& c) { return c == 'z'; });
-    CHECK(sv.empty() == true);
-}
-
-TEST_CASE("Test data") {
-    auto s = "Sum 42";
-    auto sv = fsv::filtered_string_view(s, [](const char&) { return false; });
-    auto result = std::string();
-    for (auto ptr = sv.data(); *ptr; ++ptr) {
-        result.push_back(*ptr);
-    }
-    CHECK(result == "Sum 42");
-
-    const char* s1 = "abc";
-    sv = fsv::filtered_string_view(s1);
-    CHECK(sv.data() == s1);
-}
-
-TEST_CASE("Test predicate") {
-    const auto print_and_return_true = [](const char& c) { return c == 'h'; };
-    const auto s = fsv::filtered_string_view("doggo", print_and_return_true);
-
-    const auto& predicate = s.predicate();
-    CHECK(predicate('h') == true);
-    CHECK(predicate('i') == false);
-}
-
-TEST_CASE("Test Equality Comparison") {
-    auto const lo = fsv::filtered_string_view("aaa");
-    auto const hi = fsv::filtered_string_view("zzz");
-
-    CHECK_FALSE(lo == hi);
-    CHECK(lo != hi);
-}
-
-TEST_CASE("Test Relational Comparison") {
-    auto lo = fsv::filtered_string_view("horn");
-    auto hi = fsv::filtered_string_view("a mule", [](char const& c) { return c != 'a' && c != ' '; });
-
-    CHECK(lo < hi);
-    CHECK(lo <= hi);
-    CHECK_FALSE(lo > hi);
-    CHECK_FALSE(lo >= hi);
-
-    lo = fsv::filtered_string_view("horn");
-    hi = fsv::filtered_string_view("horn");
-    CHECK_FALSE(lo < hi);
-    CHECK(lo <= hi);
-    CHECK_FALSE(lo > hi);
-    CHECK(lo >= hi);
-
-    lo = fsv::filtered_string_view("abc");
-    hi = fsv::filtered_string_view("bcd");
-    CHECK(lo < hi);
-    CHECK(lo <= hi);
-    CHECK_FALSE(lo > hi);
-    CHECK_FALSE(lo >= hi);
-
-    lo = fsv::filtered_string_view("abc");
-    hi = fsv::filtered_string_view("abcd");
-    CHECK(lo < hi);
-    CHECK(lo <= hi);
-    CHECK_FALSE(lo > hi);
-    CHECK_FALSE(lo >= hi);
-}
-
-TEST_CASE("Test Output Stream") {
-    auto fsv = fsv::filtered_string_view("c++ > rust > java", [](const char& c) { return c == 'c' || c == '+'; });
-    CHECK((std::ostringstream() << fsv).str() == "c++");
-}
-
-TEST_CASE("Test Compose") {
-    auto best_languages = fsv::filtered_string_view("c / c++");
-    auto vf = std::vector<fsv::filter>{[](const char& c) { return c == 'c' || c == '+' || c == '/'; },
-                                       [](const char& c) { return c > ' '; },
-                                       [](const char&) { return true; }};
-    auto sv = fsv::compose(best_languages, vf);
-    CHECK(sv == "c/c++");
-
-    best_languages = fsv::filtered_string_view("abcdefgh");
-    vf = std::vector<fsv::filter>{[](const char& c) { return c < 'z'; },
-                                  [](const char& c) { return c < 'h'; },
-                                  [](const char& c) { return c < 'd'; }};
-    sv = fsv::compose(best_languages, vf);
-    CHECK(sv == "abc");
-
-    best_languages = fsv::filtered_string_view("abcdefgh");
-    vf = std::vector<fsv::filter>{[](const char& c) { return c < 'a'; },
-                                  [](const char& c) { return c < 'h'; },
-                                  [](const char& c) { return c < 'd'; }};
-    sv = fsv::compose(best_languages, vf);
-    CHECK(sv == "");
-}
-
-TEST_CASE("Test Split") {
-    auto wentworth = fsv::filtered_string_view("Malcom? Bligh? Turnbull", [](const char& c) { return c != '?'; });
-    auto token = fsv::filtered_string_view(" 2015", [](const char& c) { return c == ' '; });
-    auto representative = fsv::split(wentworth, token);
-
-    CHECK(std::string(wentworth) == "Malcom Bligh Turnbull");
-    CHECK(std::string(token) == " ");
-    CHECK(std::string(representative.at(0)) == "Malcom");
-    CHECK(std::string(representative.at(1)) == "Bligh");
-    CHECK(std::string(representative.at(2)) == "Turnbull");
-
-    auto fsv = fsv::filtered_string_view("fishing");
-    auto empty_tok = fsv::filtered_string_view("");
-    auto empty_split = fsv::split(fsv, empty_tok);
-    CHECK(empty_split.at(0) == "fishing");
-
-    auto empty_fsv = fsv::filtered_string_view("");
-    empty_split = fsv::split(empty_fsv, token);
-    CHECK(empty_split.at(0) == "");
-
-    auto fill_tok = fsv::filtered_string_view("robert");
-    auto fill_split = fsv::split(fsv, fill_tok);
-    CHECK(fill_split.at(0) == "fishing");
-
-    auto sv = fsv::filtered_string_view("xax");
-    auto tok = fsv::filtered_string_view("x");
-    auto v = fsv::split(sv, tok);
-    auto expected = std::vector<fsv::filtered_string_view>{"", "a", ""};
-    CHECK(v == std::vector<fsv::filtered_string_view>{"", "a", ""});
-
-    sv = fsv::filtered_string_view("xx");
-    tok = fsv::filtered_string_view("x");
-    v = fsv::split(sv, tok);
-    expected = std::vector<fsv::filtered_string_view>{"", "", ""};
-    CHECK(v == expected);
-}
-
-TEST_CASE("Test Substr") {
-    auto sv = fsv::filtered_string_view("new york city");
-
-    CHECK(fsv::substr(sv, 4, 4) == "york");
-
-    sv = fsv::filtered_string_view("black pen");
-    CHECK(fsv::substr(sv, 6) == "pen");
-
-    sv = fsv::filtered_string_view("the right honourable. anthony charles lynton BLAIR",
-                                   [](const char& c) { return c >= 'A' and c <= 'Z'; });
-    CHECK_THROWS_AS(fsv::substr(sv, 6), std::out_of_range);
-
-    sv = fsv::filtered_string_view("notebook");
-    CHECK(fsv::substr(sv, 8).empty() == true);
-    CHECK(fsv::substr(sv, 3, 0).empty() == true);
-}
-
-TEST_CASE("Test Iterator") {
-    auto fsv = fsv::filtered_string_view("ned");
-    auto iter = fsv.begin();
-
-    CHECK((std::ostringstream() << *iter).str() == "n");
-    ++iter;
-    CHECK((std::ostringstream() << *iter).str() == "e");
-    ++iter;
-    CHECK((std::ostringstream() << *iter).str() == "d");
-    ++iter;
-    CHECK(iter == fsv.end());
-
-    fsv = fsv::filtered_string_view("samoyed", [](const char& c) {
-        return !(c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u');
-    });
-    iter = fsv.begin();
-    CHECK((std::ostringstream() << *iter).str() == "s");
-    CHECK((std::ostringstream() << *std::next(iter)).str() == "m");
-    CHECK((std::ostringstream() << *std::next(iter, 2)).str() == "y");
-    CHECK((std::ostringstream() << *std::next(iter, 3)).str() == "d");
-
-    const auto str = std::string("tosa");
-    const auto s = fsv::filtered_string_view(str);
-    auto it = s.cend();
-    CHECK((std::ostringstream() << *std::prev(it)).str() == "a");
-    CHECK((std::ostringstream() << *std::prev(it, 2)).str() == "s");
-}
-
-TEST_CASE("Test Range") {
-    auto s = fsv::filtered_string_view("puppy", [](const char& c) { return !(c == 'u' || c == 'y'); });
-    auto v = std::vector<char>{s.begin(), s.end()};
-    CHECK((std::ostringstream() << v[0]).str() == "p");
-    CHECK((std::ostringstream() << v[1]).str() == "p");
-    CHECK((std::ostringstream() << v[2]).str() == "p");
-
-    s = fsv::filtered_string_view("milo", [](const char& c) { return !(c == 'i' || c == 'o'); });
-    v = std::vector<char>{s.rbegin(), s.rend()};
-    CHECK((std::ostringstream() << v[0]).str() == "l");
-    CHECK((std::ostringstream() << v[1]).str() == "m");
+		CHECK((*it).from == "A");
+		CHECK((*it).to == "B");
+		CHECK((*it).weight.value() == 10);
+		++it;
+		CHECK((*it).from == "A");
+		CHECK((*it).to == "C");
+		CHECK_FALSE((*it).weight.has_value());
+		++it;
+		CHECK((*it).from == "A");
+		CHECK((*it).to == "C");
+		CHECK((*it).weight.value() == 5);
+		++it;
+		CHECK((*it).from == "B");
+		CHECK((*it).to == "D");
+		CHECK((*it).weight.value() == 20);
+		++it;
+		CHECK((*it).from == "D");
+		CHECK((*it).to == "D");
+		CHECK_FALSE((*it).weight.has_value());
+		++it;
+		CHECK(it == g.end());
+	}
 }
