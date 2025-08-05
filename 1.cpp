@@ -593,4 +593,30 @@ TEST_CASE("Graph Iterator for Weight and Unweight") {
 		++it;
 		CHECK(it == g.end());
 	}
+
+	SECTION("Forward ") {
+		auto it = g.end();
+		--it;
+		CHECK((*it).from == "D");
+		CHECK((*it).to == "D");
+		CHECK_FALSE((*it).weight.has_value());
+		--it;
+		CHECK((*it).from == "B");
+		CHECK((*it).to == "D");
+		CHECK((*it).weight.value() == 20);
+		--it;
+		CHECK((*it).from == "A");
+		CHECK((*it).to == "C");
+		CHECK((*it).weight.value() == 5);
+		--it;
+		CHECK((*it).from == "A");
+		CHECK((*it).to == "C");
+		CHECK_FALSE((*it).weight.has_value());
+		--it;
+		CHECK((*it).from == "A");
+		CHECK((*it).to == "B");
+		CHECK((*it).weight.value() == 10);
+
+		CHECK(it == g.begin());
+	}
 }
